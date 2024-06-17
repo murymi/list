@@ -1,5 +1,8 @@
 use std::{
-    fmt::{Debug, Display, Write}, fs::File, io::Read, ptr::NonNull
+    fmt::{Debug, Display, Write},
+    fs::File,
+    io::Read,
+    ptr::NonNull,
 };
 
 pub struct LinkedList<T: Default> {
@@ -9,12 +12,13 @@ pub struct LinkedList<T: Default> {
     forward_iter: NonNull<Node<T>>,
     backward_iter: NonNull<Node<T>>,
     itered: bool,
+    states: Vec<NonNull<Node<T>>>,
 }
 
-struct Node<T> {
+pub struct Node<T> {
     next: NonNull<Node<T>>,
     prev: NonNull<Node<T>>,
-    data: T,
+    pub data: T,
 }
 
 unsafe impl<T: Send + Default> Send for LinkedList<T> {}
@@ -77,6 +81,7 @@ impl<T: Default> LinkedList<T> {
             forward_iter: head,
             backward_iter: tail,
             itered: false,
+            states: Vec::new(),
         };
     }
 
@@ -124,24 +129,38 @@ impl<T: Default> LinkedList<T> {
         self.current = new_node;
     }
 
-    pub fn forward(&mut self) {
-        if self.current != self.tail {
+    pub fn forward(&mut self) -> Result<(), ()> {
+        if !self.is_at_end() && !self.is_empty() {
             unsafe { self.current = self.current.as_ref().get_next() }
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
-    pub fn backward(&mut self) {
-        if self.current != self.head {
+    fn is_at_end(&self) -> bool {
+        self.current == unsafe {self.tail.as_ref().get_prev()}
+    }
+
+    fn is_at_start(&self) -> bool {
+        self.current == unsafe {self.head.as_ref().get_next()}
+    }
+
+    pub fn backward(&mut self) -> Result<(), ()> {
+        if !self.is_at_start() && !self.is_empty() {
             unsafe { self.current = self.current.as_ref().get_prev() }
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
     pub fn begin(&mut self) {
-        self.current = self.head
+        self.current = unsafe { self.head.as_ref().get_next() }
     }
 
     pub fn end(&mut self) {
-        self.current = self.tail
+        self.current = unsafe { self.tail.as_ref().get_prev() }
     }
 
     pub fn prepend(&mut self, data: T) {
@@ -154,8 +173,28 @@ impl<T: Default> LinkedList<T> {
     }
 
     pub fn insert(&mut self, data: T) {
-        self.insert_after(self.current, data);
+        let was_empty = self.is_empty();
+        if was_empty {
+            self.append(data);
+            self.backward_iter = self.current;
+            self.forward_iter = self.current;
+        } else {
+            self.insert_after(self.current, data);
+        }
     }
+
+    pub fn insert_with_action<F>(&mut self, data:T, action: F)
+    where F: Fn(&mut LinkedList<T>) -> ()
+     {
+        self.insert(data);
+        (action)(self);
+    }
+
+    pub fn action<F>(&mut self, action: F)
+    where F: Fn(&mut LinkedList<T>) -> () {
+        (action)(self)
+    }
+
 
     pub fn append(&mut self, data: T) {
         let was_empty = self.is_empty();
@@ -183,7 +222,7 @@ impl<T: Default> LinkedList<T> {
         }
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         unsafe { self.head.as_ref().get_next() == self.tail }
     }
 
@@ -195,9 +234,7 @@ impl<T: Default> LinkedList<T> {
         if self.is_empty() {
             None
         } else {
-            unsafe{
-                Some(&self.current.as_ref().data)
-            }
+            unsafe { Some(&self.current.as_ref().data) }
         }
     }
 
@@ -205,9 +242,7 @@ impl<T: Default> LinkedList<T> {
         if self.is_empty() {
             None
         } else {
-            unsafe{
-                Some(&mut(self.current.as_mut().data))
-            }
+            unsafe { Some(&mut (self.current.as_mut().data)) }
         }
     }
 
@@ -224,6 +259,17 @@ impl<T: Default> LinkedList<T> {
             Some(old_data)
         } else {
             None
+        }
+    }
+
+    pub fn save_state(&mut self) {
+        self.states.push(self.current)
+    }
+
+    pub fn restore_state(&mut self) {
+        match self.states.pop() {
+            Some(s) => self.current = s,
+            _ => {}
         }
     }
 }
@@ -282,7 +328,7 @@ impl<T: Default + Debug + Display> Debug for LinkedList<T> {
                 break;
             }
             unsafe {
-                Debug::fmt( &n.as_ref().data, f).unwrap()
+                Debug::fmt(&n.as_ref().data, f).unwrap()
                 //fmt(f).unwrap()
             }
             f.write_char(',').unwrap();
@@ -406,7 +452,6 @@ mod tests {
         list.forward();
         list.edit('z');
         assert_eq!(list.get(), Some(&'z'));
-
 
         println!("{:?}", list);
     }
